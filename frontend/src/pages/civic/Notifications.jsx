@@ -2,14 +2,74 @@ import React, { useState } from 'react';
 import { Bell, CheckCircle, AlertOctagon, Info, Trash2, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import CivicLayout from './CivicLayout';
+import { getDatabase, ref, onValue } from "firebase/database";
+import { auth } from '../../firebaseConfig';
 
 const Notifications = () => {
-    const [notifications, setNotifications] = useState([
-        { id: 1, type: 'success', title: 'Issue Resolved', message: 'Your report #R-2024-003 regarding Street Light has been fixed.', time: '2 hours ago', read: false },
-        { id: 2, type: 'alert', title: 'High Severity Alert', message: 'Heavy rain detected in Sector 4. Please report any waterlogging.', time: '5 hours ago', read: false },
-        { id: 3, type: 'info', title: 'Points Added', message: 'You earned 50 Karma Points for your approved report!', time: '1 day ago', read: true },
-        { id: 4, type: 'info', title: 'Weekly Leaderboard', message: 'You are now in the top 10% of contributors.', time: '2 days ago', read: true },
-    ]);
+    const [notifications, setNotifications] = useState([]);
+
+    React.useEffect(() => {
+        const db = getDatabase(auth.app);
+
+        // Listen to Reports to generate notifications dynamically
+        const reportsRef = ref(db, 'reports');
+
+        const unsubscribe = onValue(reportsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                let generatedNotifs = [];
+
+                Object.keys(data).forEach(key => {
+                    const r = data[key];
+                    if (r.userId === auth.currentUser?.uid) {
+
+                        // 1. Creation Notification
+                        generatedNotifs.push({
+                            id: `${key}_created`,
+                            type: 'info',
+                            title: 'Report Submitted',
+                            message: `Your report for ${r.type} has been successfully received.`,
+                            time: new Date(r.timestamp).toLocaleDateString(),
+                            timestamp: r.timestamp,
+                            read: true
+                        });
+
+                        // 2. Status Updates (Simulated based on status)
+                        if (r.status !== 'Pending') {
+                            generatedNotifs.push({
+                                id: `${key}_status`,
+                                type: r.status === 'Resolved' ? 'success' : 'alert',
+                                title: `Report ${r.status}`,
+                                message: `Your report for ${r.type} is now ${r.status}.`,
+                                time: new Date(r.timestamp).toLocaleDateString(), // ideally would use a separate status timestamp
+                                timestamp: r.timestamp + 1000,
+                                read: false
+                            });
+                        }
+
+                        // 3. AI Verification Notification
+                        if (r.aiVerified) {
+                            generatedNotifs.push({
+                                id: `${key}_ai`,
+                                type: 'success',
+                                title: 'Points Awarded',
+                                message: `Your ${r.type} report was verified by AI! You earned +10 Karma Points.`,
+                                time: new Date(r.timestamp).toLocaleDateString(),
+                                timestamp: r.timestamp + 500,
+                                read: false
+                            });
+                        }
+                    }
+                });
+
+                // Sort by time descending
+                generatedNotifs.sort((a, b) => b.timestamp - a.timestamp);
+                setNotifications(generatedNotifs);
+            }
+        });
+
+        return () => unsubscribe();
+    }, []);
 
     const handleDismiss = (id) => {
         setNotifications(notifications.filter(n => n.id !== id));
@@ -47,13 +107,13 @@ const Notifications = () => {
                                     animate={{ opacity: 1, y: 0 }}
                                     exit={{ opacity: 0, scale: 0.95 }}
                                     className={`group relative p-6 rounded-2xl border shadow-sm flex items-start gap-6 transition-all hover:shadow-md ${notif.read
-                                            ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800'
-                                            : 'bg-blue-50/30 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/30'
+                                        ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800'
+                                        : 'bg-blue-50/30 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/30'
                                         }`}
                                 >
                                     <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${notif.type === 'success' ? 'bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 border-green-100 dark:border-green-500/20' :
-                                            notif.type === 'alert' ? 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-100 dark:border-red-500/20' :
-                                                'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-500/20'
+                                        notif.type === 'alert' ? 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-100 dark:border-red-500/20' :
+                                            'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-500/20'
                                         }`}>
                                         {notif.type === 'success' ? <CheckCircle size={24} /> :
                                             notif.type === 'alert' ? <AlertOctagon size={24} /> : <Info size={24} />}

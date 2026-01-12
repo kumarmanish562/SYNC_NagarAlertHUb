@@ -3,8 +3,64 @@ import { User, Mail, Phone, MapPin, Edit2, LogOut, Settings as SettingsIcon, Shi
 import { useNavigate } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
 
+import { getDatabase, ref, onValue, update } from "firebase/database";
+import { auth } from '../../firebaseConfig';
+
 const Profile = () => {
     const navigate = useNavigate();
+    const [userData, setUserData] = React.useState({
+        firstName: 'Loading...',
+        lastName: '',
+        email: '...',
+        mobile: '...',
+        address: 'Loading...',
+        mobile: '...',
+        address: 'Loading...',
+        points: 0,
+        reportCount: 0
+    });
+    const [isEditing, setIsEditing] = React.useState(false);
+    const [editedData, setEditedData] = React.useState({});
+
+
+
+    React.useEffect(() => {
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+            if (user) {
+                const db = getDatabase(auth.app);
+                const userRef = ref(db, `users/citizens/${user.uid}`);
+
+                onValue(userRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        setUserData({
+                            firstName: data.firstName || 'User',
+                            lastName: data.lastName || '',
+                            email: data.email || user.email,
+                            mobile: data.mobile || 'N/A',
+                            address: data.address || 'No address set',
+                            points: data.points || 0
+                        });
+                    }
+                });
+
+                // Fetch Report Count Realtime
+                const reportsRef = ref(db, 'reports');
+                onValue(reportsRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const allReports = snapshot.val();
+                        const myReportsCount = Object.values(allReports).filter(r => r.userId === user.uid).length;
+                        setUserData(prev => ({ ...prev, reportCount: myReportsCount }));
+                    } else {
+                        setUserData(prev => ({ ...prev, reportCount: 0 }));
+                    }
+                });
+            } else {
+                navigate('/login');
+            }
+        });
+        return () => unsubscribe();
+    }, [navigate]);
 
     return (
         <CivicLayout>
@@ -18,25 +74,31 @@ const Profile = () => {
 
                         <div className="relative w-32 h-32 mb-4">
                             <div className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-900 shadow-lg bg-slate-200 overflow-hidden relative z-10">
-                                <img src="https://ui-avatars.com/api/?name=Rahul+Kumar&background=0D8ABC&color=fff&size=128" alt="Profile" className="w-full h-full object-cover" />
+                                <img src={`https://ui-avatars.com/api/?name=${userData.firstName}+${userData.lastName}&background=0D8ABC&color=fff&size=128`} alt="Profile" className="w-full h-full object-cover" />
                             </div>
                             <button className="absolute bottom-1 right-1 z-20 bg-slate-900 dark:bg-slate-700 text-white p-2 rounded-full border-2 border-white dark:border-slate-900 hover:bg-black dark:hover:bg-slate-600 transition-colors">
                                 <Edit2 size={14} />
                             </button>
                         </div>
 
-                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">Rahul Kumar</h1>
+                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{userData.firstName} {userData.lastName}</h1>
                         <p className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-6 bg-slate-50 dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-100 dark:border-slate-700">
-                            Citizen Level 3 • Sector 4
+                            Citizen • {userData.address}
                         </p>
 
                         <div className="grid grid-cols-3 gap-2 w-full mb-6">
-                            <StatBox label="Reports" value="12" />
-                            <StatBox label="Points" value="980" highlighted />
+                            <StatBox label="Reports" value={userData.reportCount} />
+                            <StatBox label="Points" value={userData.points} highlighted />
                             <StatBox label="Rank" value="#3" />
                         </div>
 
-                        <button className="w-full py-3 bg-slate-900 hover:bg-black dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 text-white rounded-xl font-bold transition-colors">
+                        <button
+                            onClick={() => {
+                                setEditedData(userData);
+                                setIsEditing(true);
+                            }}
+                            className="w-full py-3 bg-slate-900 hover:bg-black dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 text-white rounded-xl font-bold transition-colors"
+                        >
                             Edit Public Profile
                         </button>
                     </div>
@@ -49,7 +111,7 @@ const Profile = () => {
                             <ActionRow icon={<BarChart size={18} />} label="Data Usage" />
                         </div>
                         <div className="border-t border-slate-50 dark:border-slate-800 my-4"></div>
-                        <button className="w-full py-3 text-red-500 font-bold hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl flex items-center justify-center gap-2 transition-colors">
+                        <button onClick={() => auth.signOut()} className="w-full py-3 text-red-500 font-bold hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl flex items-center justify-center gap-2 transition-colors">
                             <LogOut size={18} /> Log Out
                         </button>
                     </div>
@@ -60,23 +122,109 @@ const Profile = () => {
                     <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 p-8">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-slate-900 dark:text-white">Personal Information</h2>
-                            <button className="text-sm font-bold text-blue-600 dark:text-blue-400 hover:underline">Update</button>
+                            <button
+                                onClick={() => {
+                                    if (isEditing) {
+                                        // Save Logic
+                                        const db = getDatabase(auth.app);
+                                        const userRef = ref(db, `users/citizens/${auth.currentUser.uid}`);
+                                        update(userRef, {
+                                            firstName: editedData.firstName || userData.firstName,
+                                            lastName: editedData.lastName || userData.lastName,
+                                            mobile: editedData.mobile || userData.mobile,
+                                            address: editedData.address || userData.address
+                                        }).then(() => {
+                                            setIsEditing(false);
+                                            // Optimistic update
+                                            setUserData(prev => ({ ...prev, ...editedData }));
+                                        }).catch(err => alert("Update failed: " + err.message));
+                                    } else {
+                                        // Start Editing
+                                        setEditedData(userData);
+                                        setIsEditing(true);
+                                    }
+                                }}
+                                className="text-sm font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                                {isEditing ? 'Save Changes' : 'Update'}
+                            </button>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <InfoCard icon={<Mail className="text-blue-500" />} label="Email Address" value="rahul.k@example.com" verified />
-                            <InfoCard icon={<Phone className="text-green-500" />} label="Phone Number" value="+91 98765 43210" verified />
-                            <InfoCard icon={<MapPin className="text-indigo-500" />} label="Home Address" value="H.No 123, Sector 4, Main Road, Nagar City, 560001" fullWidth />
-                            <div className="col-span-full bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-100 dark:border-slate-700 flex items-center gap-4">
-                                <div className="w-10 h-10 bg-white dark:bg-slate-700/50 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-500 shadow-sm border border-slate-100 dark:border-slate-700">
-                                    ID
+                            {/* First Name Input */}
+                            {isEditing ? (
+                                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0">
+                                        <User size={20} className="text-slate-400" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">First Name</div>
+                                        <input
+                                            value={editedData.firstName}
+                                            onChange={(e) => setEditedData({ ...editedData, firstName: e.target.value })}
+                                            className="w-full bg-transparent font-bold text-slate-900 outline-none"
+                                        />
+                                    </div>
                                 </div>
-                                <div className="flex-1">
-                                    <div className="text-xs font-bold text-slate-400 uppercase">Government ID Linked</div>
-                                    <div className="text-sm font-bold text-slate-800 dark:text-slate-200">Aadhaar •••• 4321</div>
+                            ) : null}
+
+                            {isEditing ? (
+                                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0">
+                                        <User size={20} className="text-slate-400" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Last Name</div>
+                                        <input
+                                            value={editedData.lastName}
+                                            onChange={(e) => setEditedData({ ...editedData, lastName: e.target.value })}
+                                            className="w-full bg-transparent font-bold text-slate-900 outline-none"
+                                        />
+                                    </div>
                                 </div>
-                                <span className="text-green-600 dark:text-green-400 font-bold text-xs bg-green-50 dark:bg-green-500/10 px-2 py-1 rounded">Verified</span>
-                            </div>
+                            ) : null}
+
+                            {!isEditing && (
+                                <>
+                                    <InfoCard icon={<Mail className="text-blue-500" />} label="Email Address" value={userData.email} verified />
+                                    <InfoCard icon={<Phone className="text-green-500" />} label="Phone Number" value={`+91 ${userData.mobile}`} verified />
+                                </>
+                            )}
+
+                            {isEditing && (
+                                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0">
+                                        <Phone size={20} className="text-green-500" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Mobile</div>
+                                        <input
+                                            value={editedData.mobile}
+                                            onChange={(e) => setEditedData({ ...editedData, mobile: e.target.value })}
+                                            className="w-full bg-transparent font-bold text-slate-900 outline-none"
+                                            placeholder="Enter mobile..."
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {isEditing ? (
+                                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex items-center gap-4 col-span-full">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shrink-0">
+                                        <MapPin size={20} className="text-indigo-500" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Address</div>
+                                        <input
+                                            value={editedData.address}
+                                            onChange={(e) => setEditedData({ ...editedData, address: e.target.value })}
+                                            className="w-full bg-transparent font-bold text-slate-900 outline-none"
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <InfoCard icon={<MapPin className="text-indigo-500" />} label="Home Address" value={userData.address} fullWidth />
+                            )}
                         </div>
                     </div>
 

@@ -1,21 +1,54 @@
+
 import React, { useState } from 'react';
 import { Trophy, Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
 
+import { getDatabase, ref, onValue, query, orderByChild, limitToLast } from "firebase/database";
+import { auth } from '../../firebaseConfig';
+
 const Leaderboard = () => {
     const navigate = useNavigate();
     const [filter, setFilter] = useState('Weekly');
 
-    const users = [
-        { rank: 1, name: 'Anjali Sharma', points: 1250, badge: 'gold', avatar: 'https://ui-avatars.com/api/?name=Anjali+Sharma&background=FFD700&color=000' },
-        { rank: 2, name: 'Vikram Singh', points: 1100, badge: 'silver', avatar: 'https://ui-avatars.com/api/?name=Vikram+Singh&background=C0C0C0&color=000' },
-        { rank: 3, name: 'Rahul Kumar', points: 980, badge: 'bronze', isMe: true, avatar: 'https://ui-avatars.com/api/?name=Rahul+Kumar&background=CD7F32&color=fff' },
-        { rank: 4, name: 'Priya Patel', points: 850, badge: 'shield', avatar: 'https://ui-avatars.com/api/?name=Priya+Patel&background=random' },
-        { rank: 5, name: 'Amit Verma', points: 820, badge: 'shield', avatar: 'https://ui-avatars.com/api/?name=Amit+Verma&background=random' },
-        { rank: 6, name: 'Sneha Gupta', points: 790, badge: 'shield', avatar: 'https://ui-avatars.com/api/?name=Sneha+Gupta&background=random' },
-        { rank: 7, name: 'Rajesh Koothrappali', points: 750, badge: 'shield', avatar: 'https://ui-avatars.com/api/?name=Rajesh+K&background=random' },
-    ];
+    const [users, setUsers] = useState([]);
+
+    // Fetch Leaderboard from Firebase
+    React.useEffect(() => {
+        const fetchLeaderboard = () => {
+            const db = getDatabase(auth.app);
+
+            // In a real app with thousands of users, you'd use limitToLast(100)
+            // Firebase sorts ascending efficiently, so we get them then reverse
+            const usersRef = query(ref(db, 'users/citizens'), orderByChild('points'), limitToLast(50));
+
+            onValue(usersRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    const leaderboardData = Object.keys(data).map(key => ({
+                        id: key,
+                        ...data[key],
+                        name: `${data[key].firstName} ${data[key].lastName} `.trim(),
+                        points: data[key].points || 0,
+                        avatar: `https://ui-avatars.com/api/?name=${data[key].firstName}+${data[key].lastName}&background=random`,
+                        isMe: auth.currentUser?.uid === key
+                    }));
+
+                    // Sort descending
+                    leaderboardData.sort((a, b) => b.points - a.points);
+
+                    // Assign Rank
+                    const rankedData = leaderboardData.map((u, index) => ({
+                        ...u,
+                        rank: index + 1
+                    }));
+
+                    setUsers(rankedData);
+                }
+            });
+        };
+        fetchLeaderboard();
+    }, []);
 
     return (
         <CivicLayout>
@@ -49,46 +82,53 @@ const Leaderboard = () => {
                     {/* Top 3 Podium (Left Panel) */}
                     <div className="bg-gradient-to-b from-slate-900 to-slate-800 dark:from-slate-950 dark:to-slate-900 rounded-3xl p-8 text-white relative overflow-hidden shadow-2xl flex flex-col justify-end items-center h-[500px]">
 
+                        {/* 1st Place Name Display */}
                         <div className="absolute top-8 left-0 right-0 text-center">
                             <div className="text-yellow-400 font-bold uppercase tracking-widest text-sm mb-2">Current Champion</div>
-                            <div className="text-3xl font-extrabold">{users[0].name}</div>
+                            <div className="text-3xl font-extrabold">{users[0]?.name || 'No Data'}</div>
                         </div>
 
                         {/* Podium Visual */}
                         <div className="flex items-end gap-4 relative z-10 w-full justify-center">
-                            {/* 2nd */}
-                            <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-2 transition-transform">
-                                <div className="w-16 h-16 rounded-full border-4 border-slate-400 mb-2 relative">
-                                    <img src={users[1].avatar} className="w-full h-full rounded-full" alt="2nd" />
+                            {/* 2nd Place */}
+                            <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-2 transition-transform opacity-90">
+                                <div className="w-16 h-16 rounded-full border-4 border-slate-400 mb-2 relative bg-slate-800">
+                                    {users[1] ? (
+                                        <img src={users[1].avatar} className="w-full h-full rounded-full" alt="2nd" />
+                                    ) : <div className="w-full h-full rounded-full bg-slate-700" />}
                                     <div className="absolute -bottom-2 inset-x-0 mx-auto w-6 h-6 bg-slate-400 rounded-full flex items-center justify-center font-bold text-slate-900 text-xs">2</div>
                                 </div>
                                 <div className="w-20 h-32 bg-slate-700 rounded-t-2xl flex items-end justify-center pb-2">
-                                    <span className="font-bold text-slate-300">{users[1].points}</span>
+                                    <span className="font-bold text-slate-300">{users[1]?.points || 0}</span>
                                 </div>
                             </div>
 
-                            {/* 1st */}
+                            {/* 1st Place */}
                             <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-2 transition-transform">
                                 <div className="relative">
                                     <div className="absolute -top-8 left-0 right-0 mx-auto text-yellow-400 animate-bounce flex justify-center"><Trophy size={24} fill="currentColor" /></div>
-                                    <div className="w-20 h-20 rounded-full border-4 border-yellow-400 mb-2 relative shadow-[0_0_20px_rgba(250,204,21,0.5)]">
-                                        <img src={users[0].avatar} className="w-full h-full rounded-full" alt="1st" />
+                                    <div className="w-20 h-20 rounded-full border-4 border-yellow-400 mb-2 relative shadow-[0_0_20px_rgba(250,204,21,0.5)] bg-slate-800">
+                                        {users[0] ? (
+                                            <img src={users[0].avatar} className="w-full h-full rounded-full" alt="1st" />
+                                        ) : <div className="w-full h-full rounded-full bg-slate-700" />}
                                         <div className="absolute -bottom-2 inset-x-0 mx-auto w-7 h-7 bg-yellow-400 rounded-full flex items-center justify-center font-bold text-slate-900 text-sm">1</div>
                                     </div>
                                 </div>
                                 <div className="w-24 h-48 bg-gradient-to-t from-slate-700 to-slate-600 rounded-t-2xl flex items-end justify-center pb-4">
-                                    <span className="font-bold text-xl text-yellow-400">{users[0].points}</span>
+                                    <span className="font-bold text-xl text-yellow-400">{users[0]?.points || 0}</span>
                                 </div>
                             </div>
 
-                            {/* 3rd */}
-                            <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-2 transition-transform">
-                                <div className="w-16 h-16 rounded-full border-4 border-orange-700 mb-2 relative">
-                                    <img src={users[2].avatar} className="w-full h-full rounded-full" alt="3rd" />
+                            {/* 3rd Place */}
+                            <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-2 transition-transform opacity-80">
+                                <div className="w-16 h-16 rounded-full border-4 border-orange-700 mb-2 relative bg-slate-800">
+                                    {users[2] ? (
+                                        <img src={users[2].avatar} className="w-full h-full rounded-full" alt="3rd" />
+                                    ) : <div className="w-full h-full rounded-full bg-slate-700" />}
                                     <div className="absolute -bottom-2 inset-x-0 mx-auto w-6 h-6 bg-orange-700 rounded-full flex items-center justify-center font-bold text-white text-xs">3</div>
                                 </div>
                                 <div className="w-20 h-24 bg-slate-700 rounded-t-2xl flex items-end justify-center pb-2">
-                                    <span className="font-bold text-slate-400">{users[2].points}</span>
+                                    <span className="font-bold text-slate-400">{users[2]?.points || 0}</span>
                                 </div>
                             </div>
                         </div>
@@ -137,16 +177,18 @@ const Leaderboard = () => {
                             </table>
                         </div>
                         {/* Sticky 'Me' Row if scroll needed */}
-                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 border-t border-blue-100 dark:border-blue-800/30 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="font-bold text-blue-600 dark:text-blue-400">#3</div>
-                                <div className="flex items-center gap-3">
-                                    <img src={users[2].avatar} className="w-8 h-8 rounded-full border-2 border-white dark:border-slate-800" alt="" />
-                                    <span className="font-bold text-slate-900 dark:text-white">You (Rahul)</span>
+                        {users.find(u => u.isMe) && (
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 border-t border-blue-100 dark:border-blue-800/30 flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className="font-bold text-blue-600 dark:text-blue-400">#{users.find(u => u.isMe).rank}</div>
+                                    <div className="flex items-center gap-3">
+                                        <img src={users.find(u => u.isMe).avatar} className="w-8 h-8 rounded-full border-2 border-white dark:border-slate-800" alt="" />
+                                        <span className="font-bold text-slate-900 dark:text-white">You</span>
+                                    </div>
                                 </div>
+                                <div className="font-bold text-slate-900 dark:text-white">{users.find(u => u.isMe).points} pts</div>
                             </div>
-                            <div className="font-bold text-slate-900 dark:text-white">980 pts</div>
-                        </div>
+                        )}
                     </div>
 
                 </div>

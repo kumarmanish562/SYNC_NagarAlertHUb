@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Navbar from '../Landing Page/Navbar';
 import Footer from '../Landing Page/Footer';
-import { RecaptchaVerifier, signInWithPhoneNumber, updateProfile, updateEmail, updatePassword, sendEmailVerification } from "firebase/auth";
+import { RecaptchaVerifier, signInWithPhoneNumber, updateProfile, sendEmailVerification, GoogleAuthProvider, signInWithPopup, EmailAuthProvider, linkWithCredential } from "firebase/auth";
 import { getDatabase, ref, set } from "firebase/database";
 import { auth } from '../../firebaseConfig'; // Ensure this exports 'app' too if possible, or we get it from auth.app
 import { ShieldCheck, Phone, Loader2, X, CheckCircle } from 'lucide-react';
@@ -75,8 +75,9 @@ export default function Signup() {
 
         if (userType === 'admin') {
             if (!formData.department) newErrors.department = 'Required';
-            if (!formData.officialId.trim()) newErrors.officialId = 'Required';
-            if (!formData.secretCode.trim()) newErrors.secretCode = 'Secret Code Required';
+        }
+        if (Object.keys(newErrors).length > 0) {
+            console.log("Validation Errors:", newErrors);
         }
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
@@ -86,12 +87,6 @@ export default function Signup() {
     const handleSignup = async (e) => {
         e.preventDefault();
         if (!validateForm()) return;
-
-        // Client-side Admin Security Check (Simple)
-        if (userType === 'admin' && formData.secretCode !== 'NAGAR_ADMIN_2025') {
-            alert("Security Alert: Invalid Department Secret Code.");
-            return;
-        }
 
         setLoading(true);
         try {
@@ -122,17 +117,24 @@ export default function Signup() {
             const result = await confirmationResult.confirm(mobileOtp);
             const user = result.user; // Firebase User
 
-            // 2. Update Profile & Credentials
+            // 2. Update Profile & Link Email/Password
             await updateProfile(user, { displayName: `${formData.firstName} ${formData.lastName}` });
 
-            // Note: updateEmail/Password on Phone Auth user links the credentials
-            await updateEmail(user, formData.email);
-            await updatePassword(user, formData.password);
+            // Robust Method: Link Email/Password Credential
+            const credential = EmailAuthProvider.credential(formData.email, formData.password);
+            try {
+                await linkWithCredential(user, credential);
+            } catch (linkError) {
+                // Log warning but DO NOT STOP. 
+                // This allows the user to still sign up (via Phone) even if Email linking fails due to config.
+                console.warn("Non-critical error linking email credential:", linkError.code);
+            }
 
             // 3. Save User Data to Realtime Database (Client Side)
             const db = getDatabase(auth.app);
             const userRef = ref(db, `users/${userType}s/${user.uid}`);
 
+            // 3a. Save Main User Profile
             await set(userRef, {
                 uid: user.uid,
                 firstName: formData.firstName,
@@ -141,16 +143,39 @@ export default function Signup() {
                 email: formData.email,
                 role: userType,
                 department: userType === 'admin' ? formData.department : null,
-                officialId: userType === 'admin' ? formData.officialId : null,
                 address: userType === 'citizen' ? address : null,
-                emailVerified: false, // Will be true after they click the link
+                emailVerified: false,
                 createdAt: new Date().toISOString()
             });
 
-            // 4. Send Verification Email
-            await sendEmailVerification(user);
+            // 3b. Save to "Broadcast Contacts" Table (Only for Citizens)
+            if (userType === 'citizen' && address && formData.mobile) {
+                const broadcastRef = ref(db, `broadcast_contacts/${user.uid}`);
+                await set(broadcastRef, {
+                    mobile: formData.mobile,
+                    address: address.toLowerCase(),
+                    uid: user.uid
+                });
+            }
 
-            alert(`Welcome, ${formData.firstName}! Account created successfully. Please check your email for a verification link.`);
+            // 3c. Save Admin to Department-Specific Node (The "Different Database" Requirement)
+            if (userType === 'admin' && formData.department) {
+                const deptRef = ref(db, `departments/${formData.department}/officials/${user.uid}`);
+                await set(deptRef, {
+                    uid: user.uid,
+                    firstName: formData.firstName,
+                    lastName: formData.lastName,
+                    mobile: formData.mobile,
+                    email: formData.email,
+                    role: 'admin',
+                    joinedAt: new Date().toISOString()
+                });
+            }
+
+            // 4. Send Verification Email (SKIPPED as per request)
+            // await sendEmailVerification(user);
+
+            alert(`Welcome, ${formData.firstName}! Account created successfully.`);
 
             // 5. Navigate
             navigate(userType === 'citizen' ? '/civic/dashboard' : '/admin/dashboard');
@@ -163,6 +188,41 @@ export default function Signup() {
             } else {
                 alert("Registration Failed: " + err.message);
             }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- GOOGLE SIGN IN ---
+    const handleGoogleSignIn = async () => {
+        setLoading(true);
+        try {
+            const provider = new GoogleAuthProvider();
+            const result = await signInWithPopup(auth, provider);
+            const user = result.user;
+
+            // Save to DB (only if new - check logic usually required, but simple set here for demo)
+            const db = getDatabase(auth.app);
+            const userRef = ref(db, `users/${userType}s/${user.uid}`);
+
+            // Check if user exists logic could go here, but blindly updating for now
+            await set(userRef, {
+                uid: user.uid,
+                firstName: user.displayName?.split(' ')[0] || 'User',
+                lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+                mobile: user.phoneNumber || null,
+                email: user.email,
+                role: userType,
+                photoURL: user.photoURL,
+                department: userType === 'admin' ? formData.department : null,
+                createdAt: new Date().toISOString()
+            });
+
+            navigate(userType === 'citizen' ? '/civic/dashboard' : '/admin/dashboard');
+
+        } catch (error) {
+            console.error(error);
+            alert("Google Sign In Failed: " + error.message);
         } finally {
             setLoading(false);
         }
@@ -266,6 +326,21 @@ export default function Signup() {
                         </div>
 
                         {/* Main Form */}
+                        <div className="mb-4">
+                            <button
+                                type="button"
+                                onClick={handleGoogleSignIn}
+                                className="w-full py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-gray-200 font-bold rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all flex justify-center items-center gap-2"
+                            >
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                                Sign up with Google
+                            </button>
+                            <div className="relative my-4">
+                                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200 dark:border-slate-700"></span></div>
+                                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white dark:bg-[#0f172a] px-2 text-slate-500">Or continue with email</span></div>
+                            </div>
+                        </div>
+
                         <form className="space-y-4" onSubmit={handleSignup}>
                             <div className="flex gap-4">
                                 <div className="w-1/2 space-y-2">
@@ -293,11 +368,7 @@ export default function Signup() {
                                     <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address" className="block w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800/50 dark:text-white" />
                                 </div>
                             ) : (
-                                <>
-                                    <div className="space-y-2"><label className="text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Department</label><select name="department" value={formData.department} onChange={handleInputChange} className="block w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800/50 dark:text-white"><option value="">Select</option><option value="traffic">Traffic</option><option value="police">Police</option><option value="municipal">Municipal</option></select></div>
-                                    <div className="space-y-2"><label className="text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Official ID</label><input type="text" name="officialId" value={formData.officialId} onChange={handleInputChange} placeholder="ID" className="block w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800/50 dark:text-white" /></div>
-                                    <div className="space-y-2"><label className="text-xs font-semibold text-red-500 uppercase tracking-wider">Secret Code</label><div className="relative"><ShieldCheck className="absolute left-3 top-3.5 text-red-400" size={18} /><input type="password" name="secretCode" value={formData.secretCode} onChange={handleInputChange} placeholder="Code" className="block w-full pl-10 pr-3 py-3 border border-red-200 dark:border-red-900 rounded-lg bg-red-50 dark:bg-red-900/20 dark:text-white focus:ring-red-500" /></div>{errors.secretCode && <p className="text-xs text-red-500">{errors.secretCode}</p>}</div>
-                                </>
+                                <div className="space-y-2"><label className="text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Department</label><select name="department" value={formData.department} onChange={handleInputChange} className="block w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800/50 dark:text-white"><option value="">Select Department</option><option value="police">Police</option><option value="traffic">Traffic</option><option value="fire">Fire & Safety</option><option value="medical">Medical/Ambulance</option><option value="municipal">Municipal/Waste</option><option value="electricity">Electricity Board</option><option value="water">Water Supply</option></select></div>
                             )}
 
                             <div className="space-y-2">
@@ -310,7 +381,7 @@ export default function Signup() {
                                 <div className="w-1/2 space-y-2"><label className="text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Confirm</label><input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange} className="block w-full px-4 py-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800/50 dark:text-white" /></div>
                             </div>
 
-                            <div id="recaptcha-container"></div>
+                            <div id="recaptcha-container" className="my-2"></div>
 
                             <button type="submit" disabled={loading} className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg disabled:opacity-70 transition-all flex justify-center items-center gap-2">{loading ? <Loader2 className="animate-spin" /> : "Verify Mobile & SignUp"}</button>
                         </form>

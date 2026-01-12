@@ -1,8 +1,43 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { auth } from '../../firebaseConfig';
+import { getDatabase, ref, onValue } from 'firebase/database';
 import { Search, Bell } from 'lucide-react';
 
 const Topbar = ({ isSidebarOpen, toggleSidebar }) => {
+    const [adminData, setAdminData] = React.useState({
+        name: 'Loading...',
+        role: 'Administrator',
+        department: ''
+    });
+
+    React.useEffect(() => {
+        const fetchAdminData = () => {
+            const user = auth.currentUser;
+            if (user) {
+                const db = getDatabase();
+                // Check both main user path and department path (though main is enough for profile)
+                const userRef = ref(db, `users/admins/${user.uid}`);
+
+                onValue(userRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        setAdminData({
+                            name: `${data.firstName} ${data.lastName}`,
+                            role: 'System Admin',
+                            department: data.department ? data.department.toUpperCase() : 'ADMINISTRATOR'
+                        });
+                    }
+                });
+            }
+        };
+
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+            if (user) fetchAdminData();
+        });
+
+        return () => unsubscribe();
+    }, []);
+
     return (
         <header className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 md:px-6 flex items-center justify-between z-20 sticky top-0 transition-colors">
 
@@ -33,11 +68,11 @@ const Topbar = ({ isSidebarOpen, toggleSidebar }) => {
 
                 <div className="flex items-center gap-3 pl-1">
                     <div className="text-right hidden md:block">
-                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none">System Admin</div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-1">Administrator</div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none">{adminData.name}</div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-1">{adminData.department}</div>
                     </div>
                     <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 border-2 border-white dark:border-slate-800 shadow-sm overflow-hidden ring-2 ring-transparent hover:ring-blue-500/20 transition-all">
-                        <img src="https://ui-avatars.com/api/?name=Admin+User&background=0284c7&color=fff" className="w-full h-full object-cover" alt="Admin" />
+                        <img src={`https://ui-avatars.com/api/?name=${adminData.name}&background=0284c7&color=fff`} className="w-full h-full object-cover" alt="Admin" />
                     </div>
                 </div>
             </div>

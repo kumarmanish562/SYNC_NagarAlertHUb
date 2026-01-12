@@ -2,15 +2,54 @@ import React, { useState } from 'react';
 import { FileText, MapPin, Calendar, ArrowRight, Filter, Search, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
+import { getDatabase, ref, query, orderByChild, equalTo, onValue } from "firebase/database";
+import { auth } from '../../firebaseConfig';
 
 const MyReports = () => {
     const [filter, setFilter] = useState('All');
+    const [reports, setReports] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    const reports = [
-        { id: 'R-2024-001', type: 'Pothole', location: 'Sector 4, Main Road', date: 'Oct 24, 2025', status: 'Pending', severity: 'High' },
-        { id: 'R-2024-002', type: 'Street Light', location: 'Sector 4, Park Lane', date: 'Oct 22, 2025', status: 'Resolved', severity: 'Medium' },
-        { id: 'R-2024-003', type: 'Garbage Dump', location: 'Sector 5, Market', date: 'Oct 15, 2025', status: 'In Progress', severity: 'Low' },
-    ];
+    React.useEffect(() => {
+        const db = getDatabase(auth.app);
+
+        // Listen for reports by this user
+        // Note: Firebase Querying by child requires an index in rules, 
+        // For simplicity in this demo without easier index setup, we fetch reports and filter (client-side) 
+        // OR we can use orderByChild('userId').equalTo(uid) if index exists.
+        // We'll try client-side filtering safely for the prototype scale.
+
+        const reportsRef = ref(db, 'reports');
+
+        const unsubscribe = onValue(reportsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const userReports = Object.keys(data)
+                    .map(key => ({
+                        id: key,
+                        ...data[key]
+                    }))
+                    .filter(r => r.userId === auth.currentUser?.uid) // Client side filter for prototype
+                    .sort((a, b) => b.timestamp - a.timestamp); // Newest first
+
+                setReports(userReports.map(r => ({
+                    id: r.id,
+                    type: r.type,
+                    location: r.location?.address || `${r.location?.lat?.toFixed(4)}, ${r.location?.lng?.toFixed(4)}`, // Handle legacy data
+                    date: new Date(r.timestamp).toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' }),
+                    status: r.status,
+                    severity: r.priority
+                })));
+            } else {
+                setReports([]);
+            }
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    const filteredReports = filter === 'All' ? reports : reports.filter(r => r.status === filter);
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -58,7 +97,15 @@ const MyReports = () => {
 
             {/* Reports Grid */}
             <div className="grid gap-4">
-                {reports.map(report => (
+                {loading && <div className="text-center py-10 text-slate-500">Loading your reports...</div>}
+
+                {!loading && filteredReports.length === 0 && (
+                    <div className="text-center py-10 text-slate-500">
+                        No reports found. Start by submitting one!
+                    </div>
+                )}
+
+                {filteredReports.map(report => (
                     <div key={report.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 hover:border-blue-200 dark:hover:border-blue-500/50 transition-colors group">
                         <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
                             <div className="flex items-start gap-4">

@@ -1,0 +1,7 @@
+flask
+flask-cors
+firebase-admin
+google-generativeai
+google-cloud-bigquery
+python-dotenv
+requests

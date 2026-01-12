@@ -3,44 +3,190 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, MapPin, CheckCircle, AlertTriangle, Trash2, Lightbulb, Droplets, X, Loader2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
+import { verifyImageWithAI, submitReportToBackend } from '../../services/backendService';
+import { uploadImage } from '../../services/storageService';
+import { auth } from '../../firebaseConfig';
+import { GoogleMap, Marker, useJsApiLoader, Autocomplete } from '@react-google-maps/api';
+import { GOOGLE_MAPS_API_KEY } from '../../mapsConfig';
+
+const libraries = ['places'];
 
 const ReportIssue = () => {
     const navigate = useNavigate();
     const [selectedImage, setSelectedImage] = useState(null);
+    const [imageFile, setImageFile] = useState(null);
     const [analyzing, setAnalyzing] = useState(false);
     const [aiResult, setAiResult] = useState(null);
     const [category, setCategory] = useState(null);
+    const [location, setLocation] = useState({ lat: 22.5726, lng: 88.3639, address: 'Fetching location...' });
+    const [map, setMap] = useState(null);
+    const [searchResult, setSearchResult] = useState(null);
 
-    const handleImageUpload = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setSelectedImage(reader.result);
-                simulateAIAnalysis();
-            };
-            reader.readAsDataURL(file);
+    const { isLoaded } = useJsApiLoader({
+        id: 'google-map-script',
+        googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+        libraries
+    });
+
+    React.useEffect(() => {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const pos = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    setLocation(prev => ({ ...prev, ...pos }));
+                    // Attempt fetch, but if script isn't loaded, Effect below will catch it
+                    if (window.google?.maps?.Geocoder) {
+                        fetchAddress(pos.lat, pos.lng);
+                    }
+                },
+                (error) => {
+                    console.error("Error getting location:", error);
+                    setLocation({ lat: 23.3441, lng: 85.3096, address: 'Ranchi, Jharkhand (Default)' }); // Ranchi Coordinates
+                }
+            );
+        }
+    }, []);
+
+    // Retry address fetch when API loads
+    React.useEffect(() => {
+        if (isLoaded && location.lat && location.address === 'Fetching location...') {
+            fetchAddress(location.lat, location.lng);
+        }
+    }, [isLoaded, location.lat, location.lng]);
+
+    const fetchAddress = (lat, lng) => {
+        if (!window.google || !window.google.maps || !window.google.maps.Geocoder) return;
+
+        try {
+            const geocoder = new window.google.maps.Geocoder();
+            geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+                if (status === "OK" && results[0]) {
+                    setLocation(prev => ({ ...prev, lat, lng, address: results[0].formatted_address }));
+                } else {
+                    console.warn("Geocoder failed:", status);
+                    setLocation(prev => ({ ...prev, lat, lng, address: `${lat.toFixed(4)}, ${lng.toFixed(4)}` }));
+                }
+            });
+        } catch (error) {
+            console.error("Geocoder error:", error);
         }
     };
 
-    const simulateAIAnalysis = () => {
-        setAnalyzing(true);
-        setAiResult(null);
-        setTimeout(() => {
-            setAnalyzing(false);
-            setAiResult({
-                detected: 'Deep Pothole',
-                confidence: '98%',
-                severity: 'High',
-                recommendation: 'Immediate Repair'
-            });
-            setCategory('pothole');
-        }, 2500);
+    const onMapLoad = React.useCallback(function callback(map) {
+        setMap(map);
+    }, []);
+
+    const onMarkerDragEnd = (e) => {
+        const newLat = e.latLng.lat();
+        const newLng = e.latLng.lng();
+        fetchAddress(newLat, newLng);
     };
 
-    const handleSubmit = (e) => {
+    const onPlaceChanged = () => {
+        if (searchResult !== null) {
+            const place = searchResult.getPlace();
+            if (place.geometry) {
+                const newLat = place.geometry.location.lat();
+                const newLng = place.geometry.location.lng();
+                setLocation({
+                    lat: newLat,
+                    lng: newLng,
+                    address: place.formatted_address
+                });
+                map.panTo({ lat: newLat, lng: newLng });
+                map.setZoom(17);
+            }
+        }
+    };
+
+    const onLoadAutocomplete = (autocomplete) => {
+        setSearchResult(autocomplete);
+    };
+
+    const handleImageUpload = async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            setImageFile(file);
+            // Preview
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setSelectedImage(reader.result);
+            };
+            reader.readAsDataURL(file);
+
+            // AI Verification
+            setAnalyzing(true);
+            setAiResult(null);
+
+            try {
+                const result = await verifyImageWithAI(file);
+                if (result) {
+                    setAiResult({
+                        detected: result.explanation || 'Issue Detected',
+                        confidence: result.ai_confidence ? `${Math.round(result.ai_confidence * 100)}%` : 'N/A',
+                        severity: result.verified ? 'High' : 'Low', // Simplified logic
+                        recommendation: result.verified ? 'Verified by Gemini AI' : 'Low confidence detection',
+                        isVerified: result.verified
+                    });
+
+                    // Auto-categorize based on explanation (simple keyword match)
+                    const explanation = result.explanation.toLowerCase();
+                    if (explanation.includes('pothole')) setCategory('pothole');
+                    else if (explanation.includes('garbage') || explanation.includes('trash')) setCategory('garbage');
+                    else if (explanation.includes('light') || explanation.includes('dark')) setCategory('light');
+                    else if (explanation.includes('water') || explanation.includes('flood')) setCategory('water');
+                }
+            } catch (error) {
+                console.error("AI Analysis Failed:", error);
+                // Fallback or error state
+                setAiResult({
+                    detected: 'Analysis Failed',
+                    confidence: '0%',
+                    severity: 'Unknown',
+                    recommendation: 'Could not connect to AI backend.'
+                });
+            } finally {
+                setAnalyzing(false);
+            }
+        }
+    };
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        navigate('/civic/reports');
+
+        try {
+            let imageUrl = selectedImage; // Fallback
+
+            if (imageFile) {
+                // Upload to Firebase Storage
+                imageUrl = await uploadImage(imageFile, 'civic-reports');
+            }
+
+            const reportData = {
+                type: category || 'General',
+                type: category || 'General',
+                description: e.target.elements.description.value,
+                location: { lat: location.lat, lng: location.lng, address: location.address },
+                imageUrl: imageUrl,
+                aiVerified: aiResult?.isVerified || false,
+                aiAnalysis: aiResult?.detected || 'No analysis available',
+                aiConfidence: aiResult?.confidence ? parseInt(aiResult.confidence) : 0,
+                priority: aiResult?.severity === 'High' ? 'High' : 'Normal',
+                status: 'Pending',
+                timestamp: Date.now(),
+                userId: auth.currentUser?.uid
+            };
+
+            await submitReportToBackend(reportData);
+            alert('Report Submitted and Processed!');
+            navigate('/civic/reports');
+        } catch (error) {
+            console.error("Submission failed:", error);
+            alert('Failed to submit report. ' + error.message);
+        }
     };
 
     return (
@@ -61,17 +207,51 @@ const ReportIssue = () => {
                                 <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300">
                                     <MapPin size={20} className="text-blue-500" /> Detected Location
                                 </div>
-                                <button className="text-sm font-bold text-blue-600 hover:underline">Edit</button>
                             </div>
-                            <div className="h-40 bg-slate-200 dark:bg-slate-700 rounded-xl relative overflow-hidden">
-                                <div className="absolute inset-0 opacity-40 bg-[url('https://upload.wikimedia.org/wikipedia/commons/thumb/b/bd/Google_Maps_Logo_2020.svg/2275px-Google_Maps_Logo_2020.svg.png')] bg-cover bg-center grayscale"></div>
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <div className="w-4 h-4 bg-blue-600 rounded-full ring-4 ring-blue-500/30 animate-pulse"></div>
+
+                            {/* Autocomplete Input */}
+                            {isLoaded && (
+                                <div className="mb-4">
+                                    <Autocomplete onLoad={onLoadAutocomplete} onPlaceChanged={onPlaceChanged}>
+                                        <input
+                                            type="text"
+                                            placeholder="Search location manually..."
+                                            className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </Autocomplete>
                                 </div>
-                                <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-slate-600 border border-slate-200 shadow-sm">
-                                    22.5726, 88.3639
+                            )}
+
+                            <div className="h-64 bg-slate-200 dark:bg-slate-700 rounded-xl relative overflow-hidden">
+                                {isLoaded ? (
+                                    <GoogleMap
+                                        mapContainerStyle={{ width: '100%', height: '100%' }}
+                                        center={{ lat: location.lat || 22.5726, lng: location.lng || 88.3639 }}
+                                        zoom={15}
+                                        onLoad={onMapLoad}
+                                        options={{
+                                            streetViewControl: false,
+                                            mapTypeControl: false,
+                                            fullscreenControl: false
+                                        }}
+                                    >
+                                        <Marker
+                                            position={{ lat: location.lat || 22.5726, lng: location.lng || 88.3639 }}
+                                            draggable={true}
+                                            onDragEnd={onMarkerDragEnd}
+                                        />
+                                    </GoogleMap>
+                                ) : (
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <Loader2 className="animate-spin text-slate-400" />
+                                    </div>
+                                )}
+
+                                <div className="absolute bottom-3 left-3 right-3 bg-white/90 backdrop-blur px-3 py-2 rounded-lg text-xs font-mono font-bold text-slate-600 border border-slate-200 shadow-sm truncate">
+                                    {location.address}
                                 </div>
                             </div>
+                            <p className="text-xs text-slate-400 mt-2 text-center">Drag pin to refine location</p>
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-6">
@@ -90,7 +270,8 @@ const ReportIssue = () => {
                             <div>
                                 <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3">Description (Optional)</label>
                                 <textarea
-                                    placeholder="Add any extra details here..."
+                                    name="description"
+                                    placeholder="Describe the issue... (e.g., 'Big pothole on Main St')"
                                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 focus:ring-2 focus:ring-blue-500 outline-none resize-none h-32 text-slate-700 dark:text-slate-300"
                                 ></textarea>
                             </div>
@@ -154,19 +335,31 @@ const ReportIssue = () => {
                                                     </div>
                                                 ) : (
                                                     <div className="flex items-start gap-4">
-                                                        <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-xl flex items-center justify-center shrink-0">
-                                                            <Lightbulb size={24} />
+                                                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${aiResult.detected === 'Analysis Failed' ? 'bg-red-100 text-red-500' : 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400'}`}>
+                                                            {aiResult.detected === 'Analysis Failed' ? <AlertTriangle size={24} /> : <Lightbulb size={24} />}
                                                         </div>
                                                         <div className="flex-1">
                                                             <div className="flex justify-between items-start mb-1">
                                                                 <h4 className="font-bold text-slate-900 dark:text-white border-l-4 border-purple-500 pl-3">{aiResult.detected}</h4>
-                                                                <span className="bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-400 text-xs font-bold px-2 py-1 rounded uppercase">{aiResult.severity}</span>
+                                                                <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${aiResult.detected === 'Analysis Failed' ? 'bg-red-100 text-red-600' : 'bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-400'}`}>{aiResult.severity}</span>
                                                             </div>
                                                             <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">{aiResult.recommendation}</p>
-                                                            <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                                                <div className="bg-purple-500 h-full w-[98%]"></div>
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-400 text-right mt-1">AI Confidence: 98%</div>
+
+                                                            {aiResult.detected === 'Analysis Failed' ? (
+                                                                <button
+                                                                    onClick={() => handleImageUpload({ target: { files: [imageFile] } })}
+                                                                    className="text-xs font-bold text-blue-600 hover:text-blue-700 underline"
+                                                                >
+                                                                    Retry Analysis
+                                                                </button>
+                                                            ) : (
+                                                                <>
+                                                                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                                                        <div className="bg-purple-500 h-full w-[98%]"></div>
+                                                                    </div>
+                                                                    <div className="text-[10px] text-slate-400 text-right mt-1">AI Confidence: {aiResult.confidence}</div>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 )}

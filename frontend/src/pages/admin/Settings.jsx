@@ -16,34 +16,14 @@ const Settings = () => {
 
                 <div className="flex justify-between items-center">
                     <div>
-                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">System Settings</h1>
-                        <p className="text-slate-500 dark:text-slate-400">Manage configuration, API keys and zone definitions.</p>
+                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Admin Console Settings</h1>
+                        <p className="text-slate-500 dark:text-slate-400">Manage system configuration, API keys and zone definitions.</p>
                     </div>
                     {success && (
                         <div className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 animate-bounce border border-green-200 dark:border-green-800">
                             <CheckCircle size={16} /> {success}
                         </div>
                     )}
-                </div>
-
-                {/* Profile Section */}
-                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm transition-colors">
-                    <h2 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-                        <User size={20} className="text-blue-500" /> Admin Profile
-                    </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Display Name</label>
-                            <input type="text" defaultValue="Admin User" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-slate-900 dark:text-white" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Official Email</label>
-                            <input type="email" defaultValue="admin@nagar.gov.in" className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-slate-900 dark:text-gray-400" disabled />
-                        </div>
-                    </div>
-                    <div className="mt-4 flex justify-end">
-                        <button className="text-sm text-blue-600 dark:text-blue-400 font-bold hover:underline">Change Password</button>
-                    </div>
                 </div>
 
                 {/* API Configuration */}

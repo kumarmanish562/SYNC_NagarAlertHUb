@@ -1,8 +1,34 @@
-import React from 'react';
+
 import { Link } from 'react-router-dom';
 import { Menu, Search, Bell, Sun, Moon } from 'lucide-react';
 
+import React, { useState, useEffect } from 'react';
+import { getDatabase, ref, onValue } from "firebase/database";
+import { auth } from '../../firebaseConfig';
+
 const Topbar = ({ isSidebarOpen, toggleSidebar }) => {
+    const [userName, setUserName] = useState("Loading...");
+
+    useEffect(() => {
+        const unsubscribe = auth.onAuthStateChanged((user) => {
+            if (user) {
+                const db = getDatabase(auth.app);
+                const userRef = ref(db, `users/citizens/${user.uid}`);
+                onValue(userRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        setUserName(`${data.firstName} ${data.lastName}`);
+                    } else {
+                        // Fallback if not in citizens (maybe admin or something else)
+                        setUserName(user.displayName || "User");
+                    }
+                });
+            } else {
+                setUserName("Guest");
+            }
+        });
+        return () => unsubscribe();
+    }, []);
     return (
         <header className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 md:px-6 flex items-center justify-between z-20 sticky top-0 transition-colors">
 
@@ -35,11 +61,11 @@ const Topbar = ({ isSidebarOpen, toggleSidebar }) => {
 
                 <Link to="/civic/profile" className="flex items-center gap-3 pl-1">
                     <div className="text-right hidden md:block">
-                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none">Rahul Kumar</div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none">{userName}</div>
                         <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-1">Citizen</div>
                     </div>
                     <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 border-2 border-white dark:border-slate-800 shadow-sm overflow-hidden ring-2 ring-transparent hover:ring-blue-500/20 transition-all">
-                        <img src="https://ui-avatars.com/api/?name=Rahul+Kumar&background=0D8ABC&color=fff" className="w-full h-full object-cover" alt="Rahul" />
+                        <img src={`https://ui-avatars.com/api/?name=${userName}&background=0284c7&color=fff`} className="w-full h-full object-cover" alt="User" />
                     </div>
                 </Link>
             </div>

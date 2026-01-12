@@ -1,19 +1,61 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Camera, Map, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
+import { getDatabase, ref, onValue, query, limitToLast, orderByChild } from "firebase/database";
+import { auth } from '../../firebaseConfig';
 
 const Dashboard = () => {
+    const [stats, setStats] = useState({ total: 0, pending: 0, resolved: 0 });
+    const [recentReports, setRecentReports] = useState([]);
+    const [userPoints, setUserPoints] = useState(0);
+
+    useEffect(() => {
+        const db = getDatabase(auth.app);
+
+        // 1. Listen to Reports
+        const reportsRef = ref(db, 'reports');
+        const unsubscribeReports = onValue(reportsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const reportsArray = Object.values(data);
+
+                // Calculate Stats
+                const pending = reportsArray.filter(r => r.status === 'Pending').length;
+                const resolved = reportsArray.filter(r => r.status === 'Resolved').length;
+                setStats({ total: reportsArray.length, pending, resolved });
+
+                // Get Recent (Simple sort by time client-side for demo, usually use server filtering)
+                const sorted = reportsArray.sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+                setRecentReports(sorted);
+            }
+        });
+
+        // 2. Listen to User Points (Mocked structure mostly, but trying to read)
+        if (auth.currentUser) {
+            const userRef = ref(db, `users/citizens/${auth.currentUser.uid}`);
+            onValue(userRef, (snap) => {
+                if (snap.exists()) {
+                    setUserPoints(snap.val().points || 0); // Assuming 'points' field exists
+                }
+            });
+        }
+
+        return () => unsubscribeReports();
+    }, []);
+
     return (
         <CivicLayout>
             {/* Stats Row */}
             <div className="flex flex-col md:flex-row gap-6 md:items-end justify-between">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Dashboard Overview</h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-2">Welcome back to Sector 4, Bhilai.</p>
+                    <p className="text-slate-500 dark:text-slate-400 mt-2">Live Updates from Nagar Alert Hub</p>
                 </div>
                 <div className="flex gap-2">
-                    <span className="px-4 py-2 rounded-xl bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400 font-bold text-sm border border-green-200 dark:border-green-500/30">Safety: 92%</span>
+                    <span className="px-4 py-2 rounded-xl bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400 font-bold text-sm border border-green-200 dark:border-green-500/30">
+                        Resolved: {stats.resolved} / {stats.total}
+                    </span>
                 </div>
             </div>
 
@@ -41,19 +83,31 @@ const Dashboard = () => {
                     </div>
                     {/* Recent Activity */}
                     <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800">
-                        <h2 className="font-bold text-slate-900 dark:text-white mb-4">Recent Activity</h2>
+                        <h2 className="font-bold text-slate-900 dark:text-white mb-4">Live Reports Stream</h2>
                         <div className="space-y-4">
-                            <ActivityRow icon="🚧" title="Pothole Reported" loc="Main Road" time="10m ago" status="Pending" />
-                            <ActivityRow icon="💡" title="Street Light Fixed" loc="Park Lane" time="3h ago" status="Resolved" />
+                            {recentReports.length > 0 ? (
+                                recentReports.map((report, index) => (
+                                    <ActivityRow
+                                        key={index}
+                                        icon={report.type === 'pothole' ? '🚧' : report.type === 'garbage' ? '🗑️' : '🚩'}
+                                        title={`${report.type} Reported`}
+                                        loc={`Lat: ${report.location?.lat?.toFixed(4) || '??'}`}
+                                        time={new Date(report.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        status={report.status}
+                                    />
+                                ))
+                            ) : (
+                                <p className="text-slate-400 text-sm">No reports yet. Be the first!</p>
+                            )}
                         </div>
                     </div>
                 </div>
                 {/* Right Col */}
                 <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-3xl p-8 text-white shadow-xl flex flex-col justify-between">
                     <div>
-                        <div className="text-xs font-bold opacity-80 uppercase tracking-widest mb-1">Impact</div>
-                        <div className="text-3xl font-bold mb-4">Silver Tier</div>
-                        <div className="text-5xl font-black mb-6">980 <span className="text-lg">Pts</span></div>
+                        <div className="text-xs font-bold opacity-80 uppercase tracking-widest mb-1">Your Impact</div>
+                        <div className="text-3xl font-bold mb-4">{userPoints > 1000 ? 'Gold Tier' : 'Silver Tier'}</div>
+                        <div className="text-5xl font-black mb-6">{userPoints} <span className="text-lg">Pts</span></div>
                     </div>
                     <Link to="/leaderboard" className="block w-full py-3 bg-white/20 hover:bg-white/30 backdrop-blur rounded-xl text-center font-bold text-sm transition-colors">View Leaderboard</Link>
                 </div>

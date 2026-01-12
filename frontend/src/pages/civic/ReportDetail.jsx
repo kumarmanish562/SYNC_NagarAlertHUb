@@ -2,27 +2,45 @@ import React from 'react';
 import { MapPin, Clock, Share2, CheckCircle, AlertTriangle, ThumbsUp } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CivicLayout from './CivicLayout';
+import { getDatabase, ref, onValue } from "firebase/database";
+import { auth } from '../../firebaseConfig';
+import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { GOOGLE_MAPS_API_KEY } from '../../mapsConfig';
 
 const ReportDetail = () => {
     const navigate = useNavigate();
     const { id } = useParams();
+    const [report, setReport] = React.useState(null);
 
-    // Mock Data
-    const report = {
-        id: id || 'R-2024-001',
-        type: 'Deep Pothole',
-        status: 'In Progress',
-        location: 'Sector 4, Main Market Road',
-        time: 'Today, 10:30 AM',
-        image: 'https://images.unsplash.com/photo-1542361345-89e58247f2d1?q=80&w=1000&auto=format&fit=crop', // Swapped image for variety
-        timeline: [
-            { title: 'Report Submitted', time: '10:30 AM', active: true },
-            { title: 'AI Verification', time: '10:32 AM', active: true },
-            { title: 'Assigned to Road Team', time: '11:00 AM', active: true },
-            { title: 'Work in Progress', time: 'Now', active: true, current: true },
-            { title: 'Resolution', time: 'Est. Tomorrow', active: false },
-        ]
-    };
+    const { isLoaded } = useJsApiLoader({
+        id: 'google-map-script',
+        googleMapsApiKey: GOOGLE_MAPS_API_KEY
+    });
+
+    React.useEffect(() => {
+        const db = getDatabase(auth.app);
+        const reportRef = ref(db, `reports/${id}`);
+        onValue(reportRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                setReport({
+                    ...data,
+                    // If location is stored as {lat, lng} object
+                    lat: data.location?.lat || 0,
+                    lng: data.location?.lng || 0,
+                    // Format timestamp
+                    timeFormatted: new Date(data.timestamp).toLocaleString(),
+                    timeline: [
+                        { title: 'Report Submitted', time: new Date(data.timestamp).toLocaleTimeString(), active: true, current: data.status === 'Pending' },
+                        { title: 'In Progress', time: '...', active: data.status !== 'Pending', current: data.status === 'In Progress' },
+                        { title: 'Resolved', time: '...', active: data.status === 'Resolved', current: data.status === 'Resolved' }
+                    ]
+                });
+            }
+        });
+    }, [id]);
+
+    if (!report) return <div className="text-center p-10">Loading Report Details...</div>;
 
     return (
         <CivicLayout noPadding>
@@ -30,20 +48,30 @@ const ReportDetail = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
 
                     {/* Left Side: Visuals (Image & Map) */}
-                    <div className="relative h-[400px] lg:h-auto min-h-full">
-                        <img src={report.image} alt="Issue" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent lg:bg-gradient-to-r lg:from-transparent lg:to-black/50"></div>
-
-                        <div className="absolute top-6 left-6 z-10">
-                            <span className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg backdrop-blur-md ${report.status === 'In Progress' ? 'bg-yellow-500/90 text-white' : 'bg-green-500/90 text-white'
-                                }`}>
-                                {report.status}
-                            </span>
+                    {/* Left Side: Visuals (Image & Map) */}
+                    <div className="relative h-[400px] lg:h-auto min-h-full flex flex-col">
+                        {/* Image Half */}
+                        <div className="h-1/2 relative">
+                            <img src={report.imageUrl} alt="Issue" className="w-full h-full object-cover" />
+                            <div className="absolute top-6 left-6 z-10">
+                                <span className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg backdrop-blur-md bg-slate-900/80 text-white`}>
+                                    {report.status}
+                                </span>
+                            </div>
                         </div>
 
-                        <div className="absolute bottom-8 left-8 right-8 text-white lg:hidden">
-                            <h1 className="text-3xl font-bold mb-2">{report.type}</h1>
-                            <div className="flex items-center gap-2 opacity-90"><MapPin size={16} /> {report.location}</div>
+                        {/* Map Half */}
+                        <div className="h-1/2 relative bg-slate-100">
+                            {isLoaded ? (
+                                <GoogleMap
+                                    mapContainerStyle={{ width: '100%', height: '100%' }}
+                                    center={{ lat: report.lat, lng: report.lng }}
+                                    zoom={15}
+                                    options={{ disableDefaultUI: true, zoomControl: true }}
+                                >
+                                    <Marker position={{ lat: report.lat, lng: report.lng }} />
+                                </GoogleMap>
+                            ) : <div>Loading Map...</div>}
                         </div>
                     </div>
 
@@ -55,7 +83,7 @@ const ReportDetail = () => {
                                 <div>
                                     <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-2">{report.type}</h1>
                                     <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium">
-                                        <MapPin size={18} className="text-blue-500" /> {report.location}
+                                        <MapPin size={18} className="text-blue-500" /> {report.lat.toFixed(6)}, {report.lng.toFixed(6)}
                                     </div>
                                 </div>
                                 <div className="text-right">

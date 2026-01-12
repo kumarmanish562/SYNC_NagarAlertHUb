@@ -1,24 +1,56 @@
-import React, { useState } from 'react';
-import { Search, Filter, Eye, Trash2, UserPlus, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Filter, Eye, Trash2, UserPlus, AlertTriangle, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from './AdminLayout';
+import { getDatabase, ref, onValue, remove } from 'firebase/database';
 
 const AdminIncidents = () => {
     const [filter, setFilter] = useState('All');
     const [search, setSearch] = useState('');
+    const [incidents, setIncidents] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    const incidents = [
-        { id: 'RPT-1001', type: 'Pothole', location: 'Sector 4, Main Road', confidence: 95, severity: 'High', status: 'Pending', date: '2026-01-08' },
-        { id: 'RPT-1002', type: 'Garbage', location: 'Civil Lines', confidence: 88, severity: 'Medium', status: 'Verified', date: '2026-01-07' },
-        { id: 'RPT-1003', type: 'Fire', location: 'Industrial Area', confidence: 99, severity: 'Critical', status: 'In Progress', date: '2026-01-08' },
-        { id: 'RPT-1004', type: 'Water Log', location: 'Market Place', confidence: 75, severity: 'Low', status: 'Resolved', date: '2026-01-06' },
-        { id: 'RPT-1005', type: 'Street Light', location: 'Sector 9', confidence: 92, severity: 'Medium', status: 'Pending', date: '2026-01-05' },
-    ];
+    useEffect(() => {
+        const db = getDatabase();
+        const reportsRef = ref(db, 'reports');
+
+        const unsubscribe = onValue(reportsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const reportsArray = Object.keys(data).map(key => ({
+                    id: key,
+                    ...data[key],
+                    // Normalize fields if missing
+                    type: data[key].category ? (data[key].category.charAt(0).toUpperCase() + data[key].category.slice(1)) : 'Unknown',
+                    locationStr: data[key].location?.address || 'Unknown Location',
+                    confidence: data[key].aiConfidence || 0,
+                    status: data[key].status || 'Pending',
+                    date: data[key].createdAt ? new Date(data[key].createdAt) : new Date(),
+                    // Mock severity for now as it's not always in DB
+                    severity: data[key].aiConfidence > 90 ? 'Critical' : data[key].aiConfidence > 70 ? 'High' : 'Medium'
+                })).sort((a, b) => b.date - a.date); // Newest first
+
+                setIncidents(reportsArray);
+            } else {
+                setIncidents([]);
+            }
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    const handleDelete = async (id) => {
+        if (window.confirm('Are you sure you want to delete this incident?')) {
+            const db = getDatabase();
+            await remove(ref(db, `reports/${id}`));
+        }
+    };
 
     const filteredIncidents = incidents.filter(inc => {
         const matchesFilter = filter === 'All' || inc.status === filter;
         const matchesSearch = inc.id.toLowerCase().includes(search.toLowerCase()) ||
-            inc.location.toLowerCase().includes(search.toLowerCase()) ||
+            inc.locationStr.toLowerCase().includes(search.toLowerCase()) ||
             inc.type.toLowerCase().includes(search.toLowerCase());
         return matchesFilter && matchesSearch;
     });
@@ -50,7 +82,7 @@ const AdminIncidents = () => {
                         />
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-1">
-                        {['All', 'Pending', 'Verified', 'In Progress', 'Resolved'].map((f) => (
+                        {['All', 'Pending', 'Accepted', 'Rejected', 'Resolved'].map((f) => (
                             <button
                                 key={f}
                                 onClick={() => setFilter(f)}
@@ -78,47 +110,55 @@ const AdminIncidents = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                                {filteredIncidents.map((incident) => (
-                                    <tr key={incident.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                        <td className="px-6 py-4 font-mono font-medium text-slate-600 dark:text-slate-400">{incident.id}</td>
-                                        <td className="px-6 py-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                            {getIcon(incident.type)} {incident.type}
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-500 dark:text-slate-400">{incident.location}</td>
-                                        <td className="px-6 py-4">
-                                            <div className="w-24 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                <div className="h-full bg-blue-500" style={{ width: `${incident.confidence}%` }}></div>
-                                            </div>
-                                            <div className="text-xs text-slate-400 mt-1">{incident.confidence}% Match</div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <SeverityBadge level={incident.severity} />
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <StatusBadge status={incident.status} />
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <Link to={`/admin/incident/${incident.id}`} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors" title="View Details">
-                                                    <Eye size={18} />
-                                                </Link>
-                                                <button className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-500/10 rounded-lg transition-colors" title="Assign">
-                                                    <UserPlus size={18} />
-                                                </button>
-                                                <button className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors" title="Delete">
-                                                    <Trash2 size={18} />
-                                                </button>
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan="7" className="px-6 py-12 text-center text-slate-500">
+                                            <div className="flex justify-center items-center gap-2">
+                                                <Loader2 className="animate-spin" size={20} /> Loading Incidents...
                                             </div>
                                         </td>
                                     </tr>
-                                ))}
+                                ) : filteredIncidents.length > 0 ? (
+                                    filteredIncidents.map((incident) => (
+                                        <tr key={incident.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                                            <td className="px-6 py-4 font-mono font-medium text-slate-600 dark:text-slate-400">#{incident.id.slice(-6)}</td>
+                                            <td className="px-6 py-4 font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                                                {getIcon(incident.type)} {incident.type}
+                                            </td>
+                                            <td className="px-6 py-4 text-slate-500 dark:text-slate-400 truncate max-w-[200px]" title={incident.locationStr}>{incident.locationStr}</td>
+                                            <td className="px-6 py-4">
+                                                <div className="w-24 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-blue-500" style={{ width: `${incident.confidence}%` }}></div>
+                                                </div>
+                                                <div className="text-xs text-slate-400 mt-1">{incident.confidence || 0}% Match</div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <SeverityBadge level={incident.severity} />
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <StatusBadge status={incident.status} />
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <Link to={`/admin/incident/${incident.id}`} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors" title="View Details">
+                                                        <Eye size={18} />
+                                                    </Link>
+                                                    <button onClick={() => handleDelete(incident.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors" title="Delete">
+                                                        <Trash2 size={18} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr>
+                                        <td colSpan="7" className="px-6 py-12 text-center text-slate-400 dark:text-slate-500">
+                                            No incidents found matching your criteria.
+                                        </td>
+                                    </tr>
+                                )}
                             </tbody>
                         </table>
-                        {filteredIncidents.length === 0 && (
-                            <div className="p-12 text-center text-slate-400 dark:text-slate-500">
-                                No incidents found matching your criteria.
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>
@@ -127,10 +167,11 @@ const AdminIncidents = () => {
 };
 
 const getIcon = (type) => {
-    if (type.includes('Pothole')) return '🚗';
-    if (type.includes('Garbage')) return '🗑️';
-    if (type.includes('Fire')) return '🔥';
-    if (type.includes('Light')) return '💡';
+    const t = type.toLowerCase();
+    if (t.includes('pothole')) return '🚗';
+    if (t.includes('garbage')) return '🗑️';
+    if (t.includes('fire')) return '🔥';
+    if (t.includes('light')) return '💡';
     return '⚠️';
 };
 
@@ -151,12 +192,14 @@ const SeverityBadge = ({ level }) => {
 const StatusBadge = ({ status }) => {
     const styles = {
         'Pending': 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700',
-        'Verified': 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10',
+        'Accepted': 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10',
+        'Rejected': 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10',
+        'Verified': 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-500/10',
         'In Progress': 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-500/10',
         'Resolved': 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10',
     };
     return (
-        <span className={`px-2 py-1 rounded-md text-xs font-bold ${styles[status]}`}>
+        <span className={`px-2 py-1 rounded-md text-xs font-bold ${styles[status] || styles['Pending']}`}>
             {status}
         </span>
     );
